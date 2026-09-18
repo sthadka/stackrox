@@ -20,7 +20,12 @@
 #
 # Requires: bash, git, go >= 1.26, docker (or CONTAINER_ENGINE=podman), curl, unzip,
 # python3, GNU /usr/bin/time (optional, for CPU/RSS), ~20 GB free disk. Baseline runs
-# are slow on the full bundle (>1h total); use QUICK=1 for a fast rhel-vex-only run.
+# are slow on the full bundle (>1h total). Speed knobs:
+#   SMOKE=1  -> tiny alpine feed only (seconds/run); validates the pipeline end-to-end
+#   QUICK=1  -> the dominant rhel-vex feed only (best single-feed view of C2 & S2)
+#   FEEDS=a,b -> explicit feed list (e.g. "rhel-vex.json.zst,suse.json.zst")
+# Each run uses its own database, dropped+recreated empty before the run for a clean,
+# comparable slate.
 #
 set -euo pipefail
 
@@ -76,8 +81,11 @@ mkdir -p "$WORKDIR/bundle"
 ls -1 "$WORKDIR/bundle/bundles"/*.json.zst >/dev/null || { echo "no feed files extracted"; exit 1; }
 
 ONLY_ARGS=()
-if [ "${QUICK:-0}" = "1" ] && [ -z "${FEEDS:-}" ]; then FEEDS="rhel-vex.json.zst"; fi
-[ -n "${FEEDS:-}" ] && { ONLY_ARGS=(-only "$FEEDS"); echo "feeds: $FEEDS"; }
+# Feed selection (first match wins): SMOKE = tiny/fast sanity run; QUICK = the
+# dominant rhel-vex feed; FEEDS = explicit comma-separated list; otherwise all feeds.
+if [ -z "${FEEDS:-}" ] && [ "${SMOKE:-0}" = "1" ]; then FEEDS="alpine.json.zst"; fi
+if [ -z "${FEEDS:-}" ] && [ "${QUICK:-0}" = "1" ]; then FEEDS="rhel-vex.json.zst"; fi
+[ -n "${FEEDS:-}" ] && { ONLY_ARGS=(-only "$FEEDS"); echo "feeds: $FEEDS"; } || echo "feeds: ALL"
 FILTER_ARGS=(); [ "${FILTER:-0}" = "1" ] && { FILTER_ARGS=(-filter-notaffected); echo "S1 filter: ON"; }
 
 # ---------------------------------------------------------------------------
@@ -118,7 +126,11 @@ run_cfg() {
   log "run: $name  (claircore=$ccref, decode-workers=$workers)"
   ( cd "$WORKDIR/claircore" && git checkout -q "$ccref" )
   go build -o "$WORKDIR/bundleload" ./scanner/hack/bundleload
-  psql_c -c "DROP DATABASE IF EXISTS $db;" >/dev/null
+  # Clean slate: every run starts from a brand-new, empty database so all four
+  # runs are directly comparable (the harness recreates the schema on startup).
+  # FORCE handles any lingering connection from an interrupted previous run.
+  echo "  reset database $db (drop + create empty)"
+  psql_c -c "DROP DATABASE IF EXISTS $db WITH (FORCE);" >/dev/null
   psql_c -c "CREATE DATABASE $db;" >/dev/null
 
   : > "$LOGDIR/${name}.dbmem"
@@ -223,6 +235,10 @@ o = []
 o.append("# Scanner V4 vuln-load — C2/S2 reproduction report\n")
 o.append(f"Decode workers for S2/both: **{os.environ.get('WORKERS','?')}**. "
          "S1 not-affected filter OFF unless FILTER=1, so all runs process the same volume.\n")
+o.append("> Gains scale with **feed size and alias density**, and C2's round-trip win is "
+         "largest against a **remote** DB. Small feeds (e.g. `alpine`, which has *no* aliases) "
+         "show little/noisy improvement and are only a pipeline + correctness check — use "
+         "`QUICK=1` (rhel-vex) or a full run for representative numbers.\n")
 
 o.append("## Totals (time, CPU, memory)\n")
 o.append("| configuration | wall time | speedup | client CPU (u+s) | %CPU | client max RSS (MB) | Go peak heap (MB) | Postgres peak (MB) |")

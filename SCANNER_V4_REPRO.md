@@ -28,6 +28,9 @@ curl -fSLo reproduce.sh \
   https://raw.githubusercontent.com/sthadka/stackrox/sthadka/scanner-v4-repro/scanner/hack/bundleload/reproduce.sh
 chmod +x reproduce.sh
 
+# smoke test — tiny alpine feed, ~1–2 min total, just proves the 4-run pipeline works:
+SMOKE=1 ./reproduce.sh
+
 # fast, representative (rhel-vex feed only, ~15–30 min):
 QUICK=1 ./reproduce.sh
 
@@ -77,6 +80,7 @@ dur=… rec_per_sec=…` per updater and `bundle done … dur=…` per feed).
 | env | default | meaning |
 |---|---|---|
 | `WORKDIR` | `/tmp/sv4-repro` | working dir (repos, bundle, logs, report) |
+| `SMOKE` | `0` | `1` → tiny `alpine` feed only (seconds/run). **Pipeline + correctness check only — not a perf measurement.** alpine has no aliases and few rows, so C2/S2 gains are tiny/noisy; use `QUICK`/full for real numbers. |
 | `QUICK` | `0` | `1` → only the `rhel-vex` feed (fast, still shows C2 & S2) |
 | `FEEDS` | *(all)* | comma-separated subset, e.g. `rhel-vex.json.zst,suse.json.zst` |
 | `WORKERS` | `4` | parallel-decode workers for `s2`/`both` |
