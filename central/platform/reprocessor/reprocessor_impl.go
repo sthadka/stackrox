@@ -2,7 +2,6 @@ package reprocessor
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/pkg/errors"
 	alertDS "github.com/stackrox/rox/central/alert/datastore"
@@ -12,6 +11,7 @@ import (
 	platformmatcher "github.com/stackrox/rox/central/platform/matcher"
 	v1 "github.com/stackrox/rox/generated/api/v1"
 	"github.com/stackrox/rox/generated/storage"
+	"github.com/stackrox/rox/pkg/backgroundworker"
 	"github.com/stackrox/rox/pkg/concurrency"
 	"github.com/stackrox/rox/pkg/features"
 	"github.com/stackrox/rox/pkg/logging"
@@ -38,8 +38,7 @@ type platformReprocessorImpl struct {
 
 	semaphore  *semaphore.Weighted
 	stopSignal concurrency.Signal
-	// isStarted will make sure only one reprocessing routine runs for an instance of reprocessor
-	isStarted atomic.Bool
+	worker     *backgroundworker.RunOnceWorker
 
 	customized bool
 }
@@ -49,7 +48,7 @@ func New(alertDatastore alertDS.DataStore,
 	deploymentDatastore deploymentDS.DataStore,
 	platformMatcher platformmatcher.PlatformMatcher) PlatformReprocessor {
 
-	return &platformReprocessorImpl{
+	pr := &platformReprocessorImpl{
 		alertDatastore:      alertDatastore,
 		configDatastore:     configDatastore,
 		deploymentDatastore: deploymentDatastore,
@@ -58,22 +57,27 @@ func New(alertDatastore alertDS.DataStore,
 		stopSignal:          concurrency.NewSignal(),
 		customized:          features.CustomizablePlatformComponents.Enabled(),
 	}
+
+	pr.worker = &backgroundworker.RunOnceWorker{
+		Name: "platform-component-reprocessor",
+		Run: func(_ context.Context) error {
+			pr.RunReprocessor()
+			return nil
+		},
+		MaxAttempts: 1,
+	}
+	backgroundworker.Global.Register(pr.worker)
+
+	return pr
 }
 
 func (pr *platformReprocessorImpl) Start() {
-	swapped := pr.isStarted.CompareAndSwap(false, true)
-	if !swapped {
-		log.Error("Platform reprocessor was already started")
-		return
-	}
-	go pr.RunReprocessor()
+	pr.worker.Start(context.Background())
 }
 
 func (pr *platformReprocessorImpl) Stop() {
-	if !pr.isStarted.Load() {
-		log.Error("Platform reprocessor not started")
-	}
 	pr.stopSignal.Signal()
+	pr.worker.Stop()
 }
 
 func (pr *platformReprocessorImpl) RunReprocessor() {
