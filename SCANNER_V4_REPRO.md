@@ -85,6 +85,7 @@ dur=… rec_per_sec=…` per updater and `bundle done … dur=…` per feed).
 | `FEEDS` | *(all)* | comma-separated subset, e.g. `rhel-vex.json.zst,suse.json.zst` |
 | `WORKERS` | `4` | parallel-decode workers for `s2`/`both` |
 | `FILTER` | `0` | `1` → also enable the S1 not-affected filter in every run |
+| `PPROF` | `0` | `1` → write a Go CPU profile per run to `logs/<cfg>.pprof` (view: `go tool pprof -top logs/c2.pprof`) |
 | `PGPORT` | `5433` | host port for the throwaway Postgres |
 | `CONTAINER_ENGINE` | `docker` | set to `podman` if preferred |
 

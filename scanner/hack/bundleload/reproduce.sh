@@ -26,6 +26,8 @@
 #   FEEDS=a,b -> explicit feed list (e.g. "rhel-vex.json.zst,suse.json.zst")
 # Each run uses its own database, dropped+recreated empty before the run for a clean,
 # comparable slate.
+#   PPROF=1  -> also write a Go CPU profile per run to logs/<name>.pprof
+#              (view with: go tool pprof -top logs/c2.pprof)
 #
 set -euo pipefail
 
@@ -87,6 +89,7 @@ if [ -z "${FEEDS:-}" ] && [ "${SMOKE:-0}" = "1" ]; then FEEDS="alpine.json.zst";
 if [ -z "${FEEDS:-}" ] && [ "${QUICK:-0}" = "1" ]; then FEEDS="rhel-vex.json.zst"; fi
 [ -n "${FEEDS:-}" ] && { ONLY_ARGS=(-only "$FEEDS"); echo "feeds: $FEEDS"; } || echo "feeds: ALL"
 FILTER_ARGS=(); [ "${FILTER:-0}" = "1" ] && { FILTER_ARGS=(-filter-notaffected); echo "S1 filter: ON"; }
+[ "${PPROF:-0}" = "1" ] && echo "CPU profiling: ON (per-run .pprof files)"
 
 # ---------------------------------------------------------------------------
 log "3. start Postgres ($PG_IMAGE) on :$PGPORT"
@@ -136,17 +139,20 @@ run_cfg() {
   : > "$LOGDIR/${name}.dbmem"
   sample_db_mem "$LOGDIR/${name}.dbmem" & local sampler=$!
 
+  local pprof_args=()
+  [ "${PPROF:-0}" = "1" ] && pprof_args=(-cpuprofile "$LOGDIR/${name}.pprof")
+
   local rc=0
   if [ -n "$TIME_CMD" ]; then
     CLAIRCORE_COPY_WORKERS=1 "$TIME_CMD" -v -o "$LOGDIR/${name}.time" \
       "$WORKDIR/bundleload" -db "${DSN_BASE}/${db}?sslmode=disable" \
       -dir "$WORKDIR/bundle/bundles" -workers "$workers" \
-      "${ONLY_ARGS[@]}" "${FILTER_ARGS[@]}" >"$logf" 2>&1 || rc=$?
+      "${ONLY_ARGS[@]}" "${FILTER_ARGS[@]}" "${pprof_args[@]}" >"$logf" 2>&1 || rc=$?
   else
     CLAIRCORE_COPY_WORKERS=1 \
       "$WORKDIR/bundleload" -db "${DSN_BASE}/${db}?sslmode=disable" \
       -dir "$WORKDIR/bundle/bundles" -workers "$workers" \
-      "${ONLY_ARGS[@]}" "${FILTER_ARGS[@]}" >"$logf" 2>&1 || rc=$?
+      "${ONLY_ARGS[@]}" "${FILTER_ARGS[@]}" "${pprof_args[@]}" >"$logf" 2>&1 || rc=$?
   fi
 
   kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true
@@ -273,3 +279,7 @@ print("\n".join(o))
 PY
 
 log "done. report: $REPORT   |   raw logs: $LOGDIR/{baseline,c2,s2,both}.log"
+if [ "${PPROF:-0}" = "1" ]; then
+  echo "CPU profiles: $LOGDIR/{baseline,c2,s2,both}.pprof"
+  echo "  view: cd $WORKDIR/stackrox && go tool pprof -top $LOGDIR/c2.pprof"
+fi
