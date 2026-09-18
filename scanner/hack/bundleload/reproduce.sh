@@ -93,7 +93,7 @@ FILTER_ARGS=(); [ "${FILTER:-0}" = "1" ] && { FILTER_ARGS=(-filter-notaffected);
 
 # ---------------------------------------------------------------------------
 log "3. start Postgres ($PG_IMAGE) on :$PGPORT"
-$CE rm -f "$PG_NAME" >/dev/null 2>&1 || true
+$CE rm -f -v "$PG_NAME" >/dev/null 2>&1 || true   # -v: drop the data volume too, so re-runs don't accumulate GBs
 $CE run -d --name "$PG_NAME" --shm-size=1g \
   -e POSTGRES_USER=postgres -e POSTGRES_HOST_AUTH_METHOD=trust \
   -p "${PGPORT}:5432" "$PG_IMAGE" >/dev/null
